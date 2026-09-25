@@ -1,5 +1,2 @@
-flask
 requests
-websockets
-beautifulsoup4
-gunicorn
+urllib3
