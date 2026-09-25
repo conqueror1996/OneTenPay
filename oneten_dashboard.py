@@ -1593,6 +1593,66 @@ async function runHealth(){
 }
 </script></body></html>"""
 
+# ─── Secret Config Page ───
+CONFIG_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Config</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:#050510;color:#e4e4f8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.c{width:360px;max-width:100%}
+.card{background:#0f0f24;border:1px solid rgba(100,100,200,.12);border-radius:16px;padding:28px 24px;margin-bottom:16px}
+h2{font-size:15px;font-weight:700;color:#a78bfa;margin-bottom:20px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid rgba(100,100,200,.06)}
+.row:last-child{border:none}
+.lbl{font-size:12px;color:#7a7a9e}
+.val{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700}
+.val.g{color:#10b981}.val.b{color:#3b82f6}.val.p{color:#a78bfa}
+input[type=number]{width:70px;padding:8px 10px;background:#141430;border:1px solid rgba(100,100,200,.15);border-radius:8px;color:#e4e4f8;font-family:'JetBrains Mono',monospace;font-size:16px;text-align:center;outline:none}
+input:focus{border-color:#8b5cf6}
+.btn{width:100%;padding:12px;border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;margin-top:8px}
+.btn-p{background:linear-gradient(135deg,#8b5cf6,#7c3aed);color:#fff}
+.btn-r{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.2)}
+.btn:hover{transform:translateY(-1px)}
+.msg{text-align:center;font-size:11px;color:#10b981;margin-top:10px;min-height:16px}
+</style></head><body>
+<div class="c">
+<div class="card">
+<h2>⚙ Device Config</h2>
+<div class="row"><span class="lbl">Active Devices</span><span class="val g" id="active">—</span></div>
+<div class="row"><span class="lbl">Max Allowed</span><input type="number" id="maxInput" min="1" max="50" value="3"></div>
+<button class="btn btn-p" onclick="setMax()">Update Limit</button>
+<button class="btn btn-r" onclick="clearAll()">Clear All Sessions</button>
+<div class="msg" id="msg"></div>
+</div>
+</div>
+<script>
+const K='369369';
+async function load(){
+  const r=await fetch('/api/x/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:K})});
+  const d=await r.json();
+  document.getElementById('active').textContent=d.active_devices;
+  document.getElementById('maxInput').value=d.max_sessions;
+}
+async function setMax(){
+  const v=parseInt(document.getElementById('maxInput').value);
+  const r=await fetch('/api/x/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:K,max:v})});
+  const d=await r.json();
+  document.getElementById('msg').textContent='✅ Limit set to '+d.max_sessions;
+  load();setTimeout(()=>document.getElementById('msg').textContent='',2000);
+}
+async function clearAll(){
+  if(!confirm('Clear all sessions?'))return;
+  const r=await fetch('/api/x/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:K,clear:true})});
+  const d=await r.json();
+  document.getElementById('msg').textContent='✅ All sessions cleared';
+  load();setTimeout(()=>document.getElementById('msg').textContent='',2000);
+}
+load();setInterval(load,5000);
+</script></body></html>"""
+
 # ─── Server ───
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self,*a):pass
@@ -1619,6 +1679,8 @@ class H(http.server.BaseHTTPRequestHandler):
                 self.resp(200,HTML,"text/html")
         elif p.path=="/x369":
             self.resp(200,ADMIN_HTML,"text/html")
+        elif p.path=="/x369c":
+            self.resp(200,CONFIG_HTML,"text/html")
         elif p.path=="/api/admin/sessions":
             qs=parse_qs(p.query)
             key=qs.get("key",[""])[0]
