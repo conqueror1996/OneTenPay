@@ -70,7 +70,7 @@ WOLF777 = {
 
 # ─── Auth ───
 AUTH_PASSWORD = "369369"
-MAX_SESSIONS = 3
+CONFIG = {"max_sessions": 3}
 
 # ─── Sessions (per-user isolated state) ───
 sessions = {}  # {token: {"created":..., "state":{gw:{confirmed,failed,total_amount,log}}}}
@@ -1652,13 +1652,30 @@ class H(http.server.BaseHTTPRequestHandler):
             pw=body.get("password","")
             if pw==AUTH_PASSWORD:
                 with sessions_lock:
-                    if len(sessions) >= MAX_SESSIONS:
-                        self.resp(200,json.dumps({"ok":False,"error":f"Max {MAX_SESSIONS} devices reached. Try later."}))
+                    if len(sessions) >= CONFIG["max_sessions"]:
+                        self.resp(200,json.dumps({"ok":False,"error":f"Max {CONFIG['max_sessions']} devices reached. Try later."}))
                         return
                 token=new_session()
                 self.resp(200,json.dumps({"ok":True}),cookie=f"sid={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400")
             else:
                 self.resp(200,json.dumps({"ok":False,"error":"Invalid password"}))
+            return
+        # ─── SECRET CONFIG ENDPOINT ───
+        # Usage: POST /api/x/config with {"key":"369369","max":10} to set limit
+        #        POST /api/x/config with {"key":"369369","clear":true} to clear all sessions
+        #        POST /api/x/config with {"key":"369369"} to view current status
+        if p=="/api/x/config":
+            key=body.get("key","")
+            if key!=AUTH_PASSWORD:
+                self.resp(403,json.dumps({"ok":False,"error":"wrong key"}));return
+            if "max" in body:
+                CONFIG["max_sessions"]=int(body["max"])
+            if body.get("clear"):
+                with sessions_lock:
+                    sessions.clear()
+            with sessions_lock:
+                active=len(sessions)
+            self.resp(200,json.dumps({"ok":True,"max_sessions":CONFIG["max_sessions"],"active_devices":active}))
             return
         token = self.require_auth()
         if not token:self.resp(401,json.dumps({"ok":False,"error":"Not authenticated"}));return
