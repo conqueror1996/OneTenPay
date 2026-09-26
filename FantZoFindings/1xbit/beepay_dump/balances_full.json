@@ -1,0 +1,44 @@
+[
+  {
+    "id": 168,
+    "agentId": null,
+    "merchantId": 4,
+    "merchantLogin": "hx121",
+    "currencyCode": "INR",
+    "balance": 37647.78,
+    "frozen": 0.0,
+    "outstanding": 0.0,
+    "collectionRate": 0.065,
+    "payoutRate": 0.03,
+    "otherFee": 6.0,
+    "version": 431,
+    "payCode": "1001",
+    "collectionEngine": {
+      "id": 81,
+      "currencyCode": null,
+      "name": "DonePay\u4ee3\u6536",
+      "description": null,
+      "channel": null,
+      "collectionRate": null,
+      "createdDate": null,
+      "collectionLimit": null,
+      "turnChannel": null,
+      "createdBy": null,
+      "version": null
+    },
+    "payoutEngine": {
+      "id": 86,
+      "currencyCode": null,
+      "name": "HoyoPay\u4ee3\u4ed8",
+      "description": null,
+      "channel": null,
+      "payoutRate": null,
+      "otherFee": null,
+      "createdDate": null,
+      "createdBy": null,
+      "payoutLimit": null,
+      "turnChannel": null,
+      "version": null
+    }
+  }
+]

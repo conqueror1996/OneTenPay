@@ -1,0 +1,22 @@
+{
+  "callbacks": {
+    "pay.beepay.live": 76,
+    "sa.htpay.org": 1186
+  },
+  "channels": [
+    "UPAY_COLLECTION",
+    "SHOW_PAY_COLLECTION",
+    "TOP_PAY_COLLECTION",
+    "DONE_PAY_COLLECTION",
+    "S_PAY_COLLECTION",
+    "AI_PAY_NEW_COLLECTION",
+    "HOYO_PAY_COLLECTION"
+  ],
+  "merchants": {
+    "hx121": {
+      "count": 1262,
+      "total": 17140635.0
+    }
+  },
+  "token_count": 1186
+}

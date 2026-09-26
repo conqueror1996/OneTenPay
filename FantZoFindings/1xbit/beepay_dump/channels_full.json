@@ -1,0 +1,163 @@
+[
+  {
+    "id": 48,
+    "type": "collection",
+    "name": "\u505c\u6b62\u4ee3\u6536",
+    "key": "SD_PAY_COLLECTION",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 73,
+    "type": "payout",
+    "name": "\u505c\u6b62\u4ee3\u4ed8",
+    "key": "SD_PAY_PAYOUT",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 85,
+    "type": "collection",
+    "name": "UPAY\u4ee3\u6536",
+    "key": "UPAY_COLLECTION",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 86,
+    "type": "payout",
+    "name": "UPAY\u4ee3\u4ed8",
+    "key": "UPAY_PAYOUT",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 128,
+    "type": "payout",
+    "name": "Manual\u624b\u5de5\u4ee3\u4ed8",
+    "key": "MANUAL_PAY_PAYOUT",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 129,
+    "type": "collection",
+    "name": "BeePay\u4ee3\u6536",
+    "key": "IT_SELF_COLLECTION",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 130,
+    "type": "payout",
+    "name": "BeeyPay\u4ee3\u4ed8",
+    "key": "IT_SELF_PAYOUT",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 141,
+    "type": "collection",
+    "name": "TopPay\u4ee3\u6536",
+    "key": "TOP_PAY_COLLECTION",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 142,
+    "type": "payout",
+    "name": "TopPay\u4ee3\u4ed8",
+    "key": "TOP_PAY_PAYOUT",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 143,
+    "type": "collection",
+    "name": "HappyPay\u4ee3\u6536",
+    "key": "HAPPY_PAY_COLLECTION",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 144,
+    "type": "payout",
+    "name": "HappyPay\u4ee3\u4ed8",
+    "key": "HAPPY_PAY_PAYOUT",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 145,
+    "type": "collection",
+    "name": "ShowPay\u4ee3\u6536",
+    "key": "SHOW_PAY_COLLECTION",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 146,
+    "type": "payout",
+    "name": "ShowPay\u4ee3\u4ed8",
+    "key": "SHOW_PAY_PAYOUT",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 149,
+    "type": "collection",
+    "name": "DonePay\u4ee3\u6536",
+    "key": "DONE_PAY_COLLECTION",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 150,
+    "type": "payout",
+    "name": "DonePay\u4ee3\u4ed8",
+    "key": "DONE_PAY_PAYOUT",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 155,
+    "type": "collection",
+    "name": "AiPay\u4ee3\u6536",
+    "key": "AI_PAY_NEW_COLLECTION",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 156,
+    "type": "payout",
+    "name": "AiPay\u4ee3\u4ed8",
+    "key": "AI_PAY_NEW_PAYOUT",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 157,
+    "type": "collection",
+    "name": "BeePay\u5370\u5c3c\u4ee3\u6536",
+    "key": "BEE_PAY_IDR_COLLECTION",
+    "currencyCode": "IDR"
+  },
+  {
+    "id": 158,
+    "type": "payout",
+    "name": "BeePay\u5370\u5c3c\u4ee3\u4ed8",
+    "key": "BEE_PAY_IDR_PAYOUT",
+    "currencyCode": "IDR"
+  },
+  {
+    "id": 159,
+    "type": "collection",
+    "name": "SPay\u4ee3\u6536",
+    "key": "S_PAY_COLLECTION",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 160,
+    "type": "payout",
+    "name": "SPay\u4ee3\u4ed8",
+    "key": "S_PAY_PAYOUT",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 161,
+    "type": "collection",
+    "name": "HoyoPay\u4ee3\u6536",
+    "key": "HOYO_PAY_COLLECTION",
+    "currencyCode": "INR"
+  },
+  {
+    "id": 162,
+    "type": "payout",
+    "name": "HoyoPay\u4ee3\u4ed8",
+    "key": "HOYO_PAY_PAYOUT",
+    "currencyCode": "INR"
+  }
+]
