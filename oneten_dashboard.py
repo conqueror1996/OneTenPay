@@ -1094,28 +1094,71 @@ def _mandi_upload_statement(token, user, utr, amount):
         pass
     return False
 
-def _mandi_find_txn(token, user, request_id):
-    """Search payin report for a transaction by requestId. Returns (txnId, mid, amount) or None."""
+def _mandi_find_txn(token, user, request_id, vpa=None, amount=None):
+    """Search payin report for a transaction. Returns (txnId, mid, amount) or None.
+    Searches by: 1) request_id full-text, 2) VPA in report, 3) amount match.
+    Report CSV columns: [0]Date,[1]Updated,[2]UpdatedIn,[3]RequestId,[4]TxnId,[5]UTR,
+    [6]RequestedAmt,[7]ProcessedAmt,[8]MerchantMDR,[9]Reserve,[10]Status,[11]CustomerId,
+    [12]CustName,[13]CustMobile,[14]CustEmail"""
     base = GATEWAYS["mandipay"]["base"]
     geo = _geo("super.mandipay.com")
+    auth_h = {"User-Agent": "Mozilla/5.0", "Authorization": f"Bearer {token}",
+              "Content-Type": "application/json", "client-id": user, "access-path": "SYSTEM"}
     
     try:
-        if HAS_REQ:
-            today = datetime.now().strftime("%Y-%m-%d")
+        if not HAS_REQ:
+            return None
+        
+        from datetime import timedelta
+        _today = datetime.now()
+        for day_offset in range(3):
+            _d = (_today - timedelta(days=day_offset)).strftime("%Y-%m-%d")
             r = requests.post(f"{base}/api/v1/upi/q/payin/report?user={user}&{geo}",
-                json={"fromDate": today, "toDate": today},
-                headers={"User-Agent": "Mozilla/5.0", "Authorization": f"Bearer {token}",
-                         "Content-Type": "application/json", "client-id": user, "access-path": "SYSTEM"},
-                verify=False, timeout=30)
-            if r.status_code == 200:
-                for line in r.text.strip().split('\n')[1:]:
-                    if request_id in line:
-                        cols = line.split(',')
-                        if len(cols) > 23:
-                            return cols[13], cols[11], float(cols[18])
+                json={"fromDate": _d, "toDate": _d}, headers=auth_h, verify=False, timeout=30)
+            if r.status_code != 200:
+                continue
+            
+            for line in r.text.strip().split('\n')[1:]:
+                cols = line.split(',')
+                if len(cols) < 11:
+                    continue
+                
+                txn_id = cols[4].strip()
+                status = cols[10].strip()
+                
+                # Skip already completed/failed
+                if status in ["SUCCESS_AUTO", "SUCCESS", "FAILED", "TIMEOUT"]:
+                    continue
+                
+                # Match by request_id (full-text)
+                if request_id and request_id in line:
+                    req_amt = float(cols[6].strip()) if cols[6].strip() else 0
+                    # Get MID from status API
+                    mid = _mandi_get_mid(token, user, txn_id, base, geo)
+                    return txn_id, mid, req_amt
+                
+                # Match by amount (for PENDING transactions)
+                if amount and status in ["PENDING_PAYMENT", "PENDING", "INITIATED"]:
+                    req_amt = float(cols[6].strip()) if cols[6].strip() else 0
+                    if abs(req_amt - float(amount)) < 1:
+                        mid = _mandi_get_mid(token, user, txn_id, base, geo)
+                        return txn_id, mid, req_amt
     except Exception:
         pass
     return None
+
+def _mandi_get_mid(token, user, txn_id, base, geo):
+    """Get MID from transaction status API."""
+    try:
+        r = requests.get(f"{base}/api/v1/upi/q/payin/status/{txn_id}",
+            headers={"User-Agent": "Mozilla/5.0", "Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json", "client-id": user, "access-path": "SYSTEM"},
+            verify=False, timeout=5)
+        if r.status_code == 200:
+            return r.json().get("header", {}).get("mid", "")
+    except Exception:
+        pass
+    return ""
 
 def _mandi_confirm_admin(token, user, txn_id, mid, utr, amount):
     """Confirm a transaction via payin/update/manual/admin."""
@@ -1165,13 +1208,14 @@ def _mandi_admin_bypass(vpa, utr, amount, request_id=None):
     if not token:
         return 500, "Admin token acquisition failed"
     
-    # Find transaction
+    # Find transaction (by request_id, or VPA+amount fallback)
     if request_id:
-        result = _mandi_find_txn(token, user, request_id)
+        result = _mandi_find_txn(token, user, request_id, vpa=vpa, amount=amount)
         if not result:
             return 404, f"Transaction not found for requestId: {request_id}"
         txn_id, mid, txn_amount = result
-        amount = txn_amount
+        if txn_amount:
+            amount = txn_amount
     else:
         return 400, "request_id required for MandiPay admin bypass"
     
