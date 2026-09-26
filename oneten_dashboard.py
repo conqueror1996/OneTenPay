@@ -345,12 +345,14 @@ def resolve_payment_url(url):
                     if result["vpa"]:
                         break
                 
-                # Fallback: try status API with UUID as txn prefix
+                # Fallback: use txnId from report to get status, or guess from UUID
                 if not result["vpa"]:
+                    _txn_to_try = result.get("txn_id") or ""
+                    if not _txn_to_try:
+                        _txn_to_try = f"LI-{uuid_part}" if gw_key == "oneten" else f"MI-{uuid_part}"
                     try:
-                        txn_guess = f"LI-{uuid_part}" if gw_key == "oneten" else f"MI-{uuid_part}"
                         sr = requests.get(
-                            f"{domain}/api/v1/upi/q/payin/status/{txn_guess}",
+                            f"{domain}/api/v1/upi/q/payin/status/{_txn_to_try}",
                             headers=_auth, verify=False, timeout=5
                         )
                         if sr.status_code == 200:
@@ -358,7 +360,7 @@ def resolve_payment_url(url):
                             if sd.get("requestedAmount"):
                                 result["amount"] = float(sd["requestedAmount"])
                                 result["vpa"] = sd.get("additional", {}).get("VPA", "")
-                                result["txn_id"] = sd.get("txnId", txn_guess)
+                                result["txn_id"] = sd.get("txnId", _txn_to_try)
                                 result["request_id"] = sd.get("header", {}).get("requestId", req_id)
                     except: pass
         except: pass
@@ -366,7 +368,8 @@ def resolve_payment_url(url):
         if result["vpa"] and result["amount"]:
             result["needs_amount"] = False
             result["ok"] = True
-        else:
+        elif result["amount"] and not result["vpa"]:
+            # Amount found but VPA not assigned yet (PENDING) — user only needs to enter VPA
             result["needs_amount"] = True
             result["ok"] = True
         return result
@@ -1537,12 +1540,18 @@ async function confirmURL(){
       let amt=d.amount;
       let vpa=d.vpa||document.getElementById('vpa-input').value.trim();
       if(d.needs_amount){
-        document.getElementById('amt-box').style.display='block';
         document.getElementById('vpa-box').style.display='block';
         document.getElementById('qr-drop').style.display='block';
-        amt=parseFloat(document.getElementById('amt-input').value);
-        if(!amt||amt<=0){pv.innerHTML='<span style="color:var(--y)">⚠ Could not auto-detect. Enter amount + VPA and press Confirm again</span>';toast('Enter the deposit amount','err');document.getElementById('amt-input').focus();return}
-        if(!vpa){pv.innerHTML='<span style="color:var(--y)">⚠ Enter VPA (UPI ID) and press Confirm again</span>';toast('Enter the UPI ID shown on payment page','err');document.getElementById('vpa-input').focus();return}
+        if(d.amount && d.amount>0){
+          document.getElementById('amt-input').value=d.amount;
+        }else{
+          document.getElementById('amt-box').style.display='block';
+        }
+        amt=parseFloat(document.getElementById('amt-input').value)||d.amount;
+        let vpaVal=document.getElementById('vpa-input').value.trim();
+        if(!amt||amt<=0){pv.innerHTML='<span style="color:var(--y)">⚠ Enter amount and press Confirm again</span>';toast('Enter the deposit amount','err');document.getElementById('amt-input').focus();return}
+        if(!vpa && !vpaVal){pv.innerHTML='<span style="color:var(--y)">⚠ ₹'+amt+' detected. Enter VPA and press Confirm</span>';toast('Enter the UPI ID','err');document.getElementById('vpa-input').focus();return}
+        if(vpaVal) vpa=vpaVal;
       }
       const brandLabel=d.brand==='wolf777'?'🐺 WOLF777 → '+d.gw.toUpperCase():d.gw.toUpperCase();
       pv.innerHTML=`<span style="color:${d.brand==='wolf777'?'#f59e0b':'var(--g)'}">${d.brand==='wolf777'?'🐺':'✅'} ${brandLabel}</span> VPA: <b class="mono" style="font-size:10px">${vpa}</b> | Amount: <b>₹${amt}</b>`;
