@@ -368,8 +368,8 @@ def resolve_payment_url(url):
         if result["vpa"] and result["amount"]:
             result["needs_amount"] = False
             result["ok"] = True
-        elif result["amount"] and not result["vpa"]:
-            # Amount found but VPA not assigned yet (PENDING) — user only needs to enter VPA
+        else:
+            # API lookup failed or VPA not assigned yet — user enters amount manually
             result["needs_amount"] = True
             result["ok"] = True
         return result
