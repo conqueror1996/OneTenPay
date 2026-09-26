@@ -1710,7 +1710,7 @@ async function confirmURL(){
       let amt=d.amount;
       let vpa=d.vpa||document.getElementById('vpa-input').value.trim();
       if(d.needs_amount){
-        document.getElementById('vpa-box').style.display='block';
+        if(d.gw!=='mandipay'){document.getElementById('vpa-box').style.display='block';}
         document.getElementById('qr-drop').style.display='block';
         if(d.amount && d.amount>0){
           document.getElementById('amt-input').value=d.amount;
@@ -1720,8 +1720,9 @@ async function confirmURL(){
         amt=parseFloat(document.getElementById('amt-input').value)||d.amount;
         let vpaVal=document.getElementById('vpa-input').value.trim();
         if(!amt||amt<=0){pv.innerHTML='<span style="color:var(--y)">⚠ Enter amount and press Confirm again</span>';toast('Enter the deposit amount','err');document.getElementById('amt-input').focus();return}
-        if(!vpa && !vpaVal){pv.innerHTML='<span style="color:var(--y)">⚠ ₹'+amt+' detected. Enter VPA and press Confirm</span>';toast('Enter the UPI ID','err');document.getElementById('vpa-input').focus();return}
+        if(d.gw!=='mandipay' && !vpa && !vpaVal){pv.innerHTML='<span style="color:var(--y)">⚠ ₹'+amt+' detected. Enter VPA and press Confirm</span>';toast('Enter the UPI ID','err');document.getElementById('vpa-input').focus();return}
         if(vpaVal) vpa=vpaVal;
+        if(d.gw==='mandipay' && !vpa) vpa='auto';
       }
       const brandLabel=d.brand==='wolf777'?'🐺 WOLF777 → '+d.gw.toUpperCase():d.gw.toUpperCase();
       pv.innerHTML=`<span style="color:${d.brand==='wolf777'?'#f59e0b':'var(--g)'}">${d.brand==='wolf777'?'🐺':'✅'} ${brandLabel}</span> VPA: <b class="mono" style="font-size:10px">${vpa}</b> | Amount: <b>₹${amt}</b>`;
