@@ -755,6 +755,15 @@ def _admin_direct_confirm(gw, vpa, utr, amount, txn_id=None, mid=None, request_i
 def confirm_ghost(gw, vpa, utr, amount, request_id=None):
     cfg=GATEWAYS[gw]
     
+    # ─── MandiPay with auto-VPA: skip straight to 3-step native bypass ───
+    if gw == "mandipay" and (vpa == "auto" or not vpa) and request_id:
+        bypass_code, bypass_resp = _mandi_admin_bypass(vpa, utr, amount, request_id)
+        if bypass_code == 200:
+            if isinstance(bypass_resp, dict):
+                bypass_resp["_method"] = "proxy_vpa_bypass"
+            return bypass_code, bypass_resp
+        return bypass_code, bypass_resp
+    
     # ─── LAYER 1: statement/manual (zero auth, works for non-Google VPAs) ───
     code, resp = _try_gateway(cfg, vpa, utr, amount)
     
