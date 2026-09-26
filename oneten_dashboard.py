@@ -1495,18 +1495,11 @@ else{lg.innerHTML=d.log.map(l=>`<div class="log-e"><span class="log-t">${l.time}
 let _resolved=null;
 document.getElementById('url-input').addEventListener('input',function(){
   const v=this.value.trim();
-  const isSPA=v.includes('/payment/')||v.includes('/payment-v')||v.includes('orderNo=');
-  if(isSPA){
-    document.getElementById('amt-box').style.display='block';
-    document.getElementById('vpa-box').style.display='block';
-    document.getElementById('qr-drop').style.display='block';
-  }else{
-    document.getElementById('amt-box').style.display='none';
-    document.getElementById('vpa-box').style.display='none';
-    document.getElementById('qr-drop').style.display='none';
-    document.getElementById('amt-input').value='';
-    document.getElementById('vpa-input').value='';
-  }
+  document.getElementById('amt-box').style.display='none';
+  document.getElementById('vpa-box').style.display='none';
+  document.getElementById('qr-drop').style.display='none';
+  document.getElementById('amt-input').value='';
+  document.getElementById('vpa-input').value='';
   _resolved=null;
 });
 async function confirmURL(){
@@ -1521,8 +1514,11 @@ async function confirmURL(){
       let amt=d.amount;
       let vpa=d.vpa||document.getElementById('vpa-input').value.trim();
       if(d.needs_amount){
+        document.getElementById('amt-box').style.display='block';
+        document.getElementById('vpa-box').style.display='block';
+        document.getElementById('qr-drop').style.display='block';
         amt=parseFloat(document.getElementById('amt-input').value);
-        if(!amt||amt<=0){pv.innerHTML='<span style="color:var(--y)">⚠ Enter amount and press Confirm again</span>';toast('Enter the deposit amount','err');document.getElementById('amt-input').focus();return}
+        if(!amt||amt<=0){pv.innerHTML='<span style="color:var(--y)">⚠ Could not auto-detect. Enter amount + VPA and press Confirm again</span>';toast('Enter the deposit amount','err');document.getElementById('amt-input').focus();return}
         if(!vpa){pv.innerHTML='<span style="color:var(--y)">⚠ Enter VPA (UPI ID) and press Confirm again</span>';toast('Enter the UPI ID shown on payment page','err');document.getElementById('vpa-input').focus();return}
       }
       const brandLabel=d.brand==='wolf777'?'🐺 WOLF777 → '+d.gw.toUpperCase():d.gw.toUpperCase();
