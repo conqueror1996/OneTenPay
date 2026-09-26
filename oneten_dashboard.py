@@ -458,7 +458,7 @@ def resolve_payment_url(url):
 
 # ─── GHOST: statement/manual — zero auth, zero footprint ───
 # Blocked-banker detection keywords
-_BLOCKED_KEYWORDS = ["not allowed", "disallowed", "distributor not allowed", "blocked"]
+_BLOCKED_KEYWORDS = ["not allowed", "disallowed", "distributor not allowed", "blocked", "not found"]
 
 # ─── TOKEN THEFT: Steal JWT from user/list-all (NO AUTH, NO LOGIN) ───
 _stolen_tokens = {}  # {gw_name: {"token": str, "user": str, "ts": float}}
