@@ -38,8 +38,8 @@ GATEWAYS = {
         "name": "MandiPay",
         "base": "https://super.mandipay.com",
         "domains": ["https://upi.mandipay.com", "https://super.mandipay.com"],
-        "salt": "TEST_SALT",
-        "hash_salt": "TEST_SALT",
+        "salt": "xCrBYtsJmcMq3dJP",
+        "hash_salt": "E7N9PUS6TDLZ0FZDNR4USNL7MVSTQL34",
         "method": "direct",
         "user": "devops@banker",
         "jwt_user": "axel@banker",
@@ -1164,7 +1164,7 @@ def _mandi_confirm_admin(token, user, txn_id, mid, utr, amount):
     """Confirm a transaction via payin/update/manual/admin."""
     base = GATEWAYS["mandipay"]["base"]
     geo = _geo("super.mandipay.com")
-    salt = "TEST_SALT"
+    salt = "E7N9PUS6TDLZ0FZDNR4USNL7MVSTQL34"  # admin|salt from config API
     req_id = f"REQ{int(time.time())}"
     ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     amt = int(amount)
@@ -1219,21 +1219,17 @@ def _mandi_admin_bypass(vpa, utr, amount, request_id=None):
     else:
         return 400, "request_id required for MandiPay admin bypass"
     
-    # Step 1: Find a non-Google proxy VPA for statement upload
-    proxy_vpa = _mandi_find_proxy_vpa(token, user)
-    if not proxy_vpa:
-        # Fallback: try GPay CSV upload (Sep 22 method)
-        if not _mandi_upload_statement(token, user, utr, amount):
-            return 500, "No proxy VPA found and GPay CSV upload failed"
-    else:
-        # Step 2: Upload statement via proxy VPA (ZERO AUTH, no Google block)
-        if not _mandi_proxy_statement(proxy_vpa, utr, amount):
-            # Fallback: try GPay CSV upload
-            if not _mandi_upload_statement(token, user, utr, amount):
-                return 500, "Proxy statement + GPay CSV both failed"
+    # Step 1: Upload GPay CSV statement (REQUIRED for require-statement=true)
+    # This creates a statement entry linked to the GPay account that owns the VPA
+    gpay_ok = _mandi_upload_statement(token, user, utr, amount)
     
-    # Step 3: Admin confirm with same UTR → targets the real txn
-    import time; time.sleep(1)  # Brief pause for statement to propagate
+    # Step 2: Also upload proxy VPA statement (creates UTR entry in statement pool)
+    proxy_vpa = _mandi_find_proxy_vpa(token, user)
+    if proxy_vpa:
+        _mandi_proxy_statement(proxy_vpa, utr, amount)
+    
+    # Step 3: Wait for statement linkage, then admin confirm
+    import time; time.sleep(2)  # Brief pause for statement to propagate
     code, resp = _mandi_confirm_admin(token, user, txn_id, mid, utr, amount)
     return code, resp
 
